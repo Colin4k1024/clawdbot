@@ -1,0 +1,136 @@
+# syntax=docker/dockerfile:1.7
+#
+# OpenClaw Quick-Start Image
+#
+# Optimized for sub-second gateway startup:
+# - No extensions (bare gateway only)
+# - V8 compile cache pre-warmed during build
+# - Minimal runtime packages (ca-certificates + curl only)
+# - Direct dist/index.js entry (bypasses openclaw.mjs wrapper)
+#
+# Build:  docker build -f Dockerfile.quickstart -t openclaw:quickstart .
+# Run:    docker run -p 18789:18789 -e OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32) openclaw:quickstart
+
+ARG OPENCLAW_NODE_BOOKWORM_IMAGE="node:24-bookworm@sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b"
+ARG OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE="node:24-bookworm-slim@sha256:e8e2e91b1378f83c5b2dd15f0247f34110e2fe895f6ca7719dbb780f929368eb"
+
+# ── Stage 1: Build ──────────────────────────────────────────────
+FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS build
+
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+      if curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL https://bun.sh/install | bash; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 5 ]; then exit 1; fi; \
+      sleep $((attempt * 2)); \
+    done
+ENV PATH="/root/.bun/bin:${PATH}"
+
+RUN corepack enable
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY openclaw.mjs ./
+COPY ui/package.json ./ui/package.json
+COPY patches ./patches
+COPY scripts/postinstall-bundled-plugins.mjs scripts/preinstall-package-manager-warning.mjs scripts/npm-runner.mjs scripts/windows-cmd-helpers.mjs ./scripts/
+COPY scripts/lib/package-dist-imports.mjs ./scripts/lib/package-dist-imports.mjs
+
+# No extensions — create empty dir to satisfy workspace references
+RUN mkdir -p extensions
+
+RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile
+
+COPY . .
+
+# Normalize permissions
+RUN for dir in /app/extensions /app/.agent /app/.agents; do \
+      if [ -d "$dir" ]; then \
+        find "$dir" -type d -exec chmod 755 {} +; \
+        find "$dir" -type f -exec chmod 644 {} +; \
+      fi; \
+    done
+
+# A2UI bundle (non-fatal under cross-compilation)
+RUN pnpm canvas:a2ui:bundle || \
+    (echo "A2UI bundle: creating stub (non-fatal)" && \
+     mkdir -p src/canvas-host/a2ui && \
+     echo "/* A2UI bundle unavailable in this build */" > src/canvas-host/a2ui/a2ui.bundle.js && \
+     echo "stub" > src/canvas-host/a2ui/.bundle.hash && \
+     rm -rf vendor/a2ui apps/shared/OpenClawKit/Tools/CanvasA2UI)
+RUN pnpm build:docker
+ENV OPENCLAW_PREFER_PNPM=1
+RUN pnpm ui:build
+# qa:lab:build skipped — quickstart image has no extensions
+
+# ── Stage 2: Runtime Assets ────────────────────────────────────
+FROM build AS runtime-assets
+
+# Prune to production deps only (no extensions in workspace)
+RUN printf 'packages:\n  - .\n  - ui\n' > pnpm-workspace.yaml && \
+    CI=true NPM_CONFIG_FROZEN_LOCKFILE=false pnpm prune --prod && \
+    node scripts/postinstall-bundled-plugins.mjs && \
+    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete && \
+    node scripts/check-package-dist-imports.mjs /app
+
+# ── Stage 3: Minimal Runtime ──────────────────────────────────
+FROM ${OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE} AS runtime
+
+LABEL org.opencontainers.image.source="https://github.com/openclaw/openclaw" \
+  org.opencontainers.image.title="OpenClaw Quickstart" \
+  org.opencontainers.image.description="Minimal OpenClaw gateway — sub-second startup, no extensions"
+
+WORKDIR /app
+
+# Minimal runtime deps: only ca-certificates (TLS) and curl (healthcheck)
+RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl && \
+    update-ca-certificates
+
+RUN chown node:node /app
+
+# Copy only what the bare gateway needs
+COPY --from=runtime-assets --chown=node:node /app/dist ./dist
+COPY --from=runtime-assets --chown=node:node /app/node_modules ./node_modules
+COPY --from=runtime-assets --chown=node:node /app/package.json .
+
+# Symlink CLI binary
+RUN ln -sf /app/dist/index.js /usr/local/bin/openclaw
+
+# Pre-create state dir with correct ownership
+RUN install -d -m 0700 -o node -g node /home/node/.openclaw && \
+    install -d -m 0700 -o node -g node /home/node/.openclaw/workspace
+
+ENV NODE_ENV=production
+ENV NODE_COMPILE_CACHE=/app/.compile-cache
+ENV NODE_OPTIONS="--max-old-space-size=512"
+
+USER node
+
+# ── Stage 4: Pre-warm V8 Compile Cache ────────────────────────
+# Start the gateway briefly so Node.js populates the compile cache,
+# then bake the cached bytecode into the final image layer.
+RUN set -eux; \
+    mkdir -p /app/.compile-cache && \
+    node dist/index.js gateway --allow-unconfigured --port 19999 --bind loopback & \
+    GW_PID=$!; \
+    for i in $(seq 1 30); do \
+      if curl -sf http://127.0.0.1:19999/healthz >/dev/null 2>&1; then break; fi; \
+      sleep 0.1; \
+    done; \
+    kill "$GW_PID" 2>/dev/null || true; \
+    wait "$GW_PID" 2>/dev/null || true; \
+    echo "Compile cache populated:" && ls -la /app/.compile-cache/ 2>/dev/null || true
+
+EXPOSE 18789
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD curl -sf http://127.0.0.1:18789/healthz || exit 1
+
+CMD ["node", "dist/index.js", "gateway", "--allow-unconfigured", "--port", "18789", "--bind", "lan"]
