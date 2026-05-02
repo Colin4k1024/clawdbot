@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openclaw
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openclaw
+        app.kubernetes.io/component: gateway
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: gateway
+          # For ACR: registry.cn-hangzhou.aliyuncs.com/<namespace>/openclaw:quickstart
+          # For local kind: openclaw:quickstart (load with: kind load docker-image openclaw:quickstart)
+          image: openclaw:quickstart
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - dist/index.js
+            - gateway
+            - --allow-unconfigured
+            - --port
+            - "18789"
+            - --bind
+            - lan
+          ports:
+            - name: gateway
+              containerPort: 18789
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            # Pre-warmed V8 compile cache lives in the image layer at /app/.compile-cache.
+            # With readOnlyRootFilesystem, Node reads cached bytecode but cannot write updates.
+            # enableCompileCache() handles write failures silently (try/catch in entry.compile-cache.ts).
+            # Do NOT mount an emptyDir here — that would shadow the pre-warmed cache.
+            - name: NODE_COMPILE_CACHE
+              value: /app/.compile-cache
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=512"
+            - name: HOME
+              value: /home/node
+            - name: OPENCLAW_EXTENSIONS
+              value: ""
+            - name: TZ
+              value: UTC
+            # WARNING: Without a token, the gateway is unauthenticated on 0.0.0.0.
+            # For any non-isolated cluster, create a Secret and uncomment below:
+            #   kubectl create secret generic openclaw-secrets \
+            #     --from-literal=gateway-token=$(openssl rand -hex 32) -n openclaw
+            # - name: OPENCLAW_GATEWAY_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: openclaw-secrets
+            #       key: gateway-token
+          # Startup probe: gives container up to 5s to start (5 x 1s)
+          # Once passed, kubelet switches to liveness/readiness probes
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: gateway
+            periodSeconds: 1
+            failureThreshold: 5
+          # Liveness: detect hung process
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: gateway
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Readiness: route traffic only when ready
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: gateway
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: state
+              mountPath: /home/node/.openclaw
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /home/node/.openclaw/openclaw.json
+              subPath: openclaw.json
+              readOnly: true
+      volumes:
+        - name: state
+          emptyDir:
+            sizeLimit: 100Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 50Mi
+        - name: config
+          configMap:
+            name: openclaw-config

@@ -1,0 +1,51 @@
+# OpenClaw Quick-Start Compose
+#
+# Usage:
+#   docker compose -f docker-compose.quickstart.yml up -d
+#
+# Generate a gateway token first:
+#   export OPENCLAW_GATEWAY_TOKEN=$(openssl rand -hex 32)
+#
+# The gateway binds to 0.0.0.0 (lan) so it's reachable from the host
+# via Docker bridge networking. Auth token is required for non-loopback.
+
+services:
+  openclaw-gateway:
+    image: ${OPENCLAW_IMAGE:-openclaw:quickstart}
+    build:
+      context: .
+      dockerfile: Dockerfile.quickstart
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      NODE_ENV: production
+      NODE_COMPILE_CACHE: /app/.compile-cache
+      NODE_OPTIONS: "--max-old-space-size=512"
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_EXTENSIONS: ""
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - openclaw-data:/home/node/.openclaw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+    init: true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:18789/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+
+volumes:
+  openclaw-data:
