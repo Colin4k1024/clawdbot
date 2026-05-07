@@ -9,7 +9,7 @@ variables:
 build-docker-image:
   stage: build
   tags:
-    - dind.docker.cicd.argocd.paas
+    - dind.k8s.cicd.argocd.paas
   script:
     - docker login ${HARBOR_HOST} -u ${HARBOR_PROJECT} -p ${HARBOR_PASS}
     - IMAGE="${HARBOR_HOST}/${HARBOR_PROJECT}/clawbot:${IMAGE_TAG}"
