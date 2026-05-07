@@ -1,0 +1,23 @@
+stages:
+  - build
+
+variables:
+  HARBOR_HOST: "harbor-test.haier.net"
+  HARBOR_PROJECT: "s04644"
+  IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
+
+build-docker-image:
+  stage: build
+  tags:
+    - dind.k8s.cicd.argocd.paas
+  script:
+    - docker login ${HARBOR_HOST} -u ${HARBOR_PROJECT} -p ${HARBOR_PASS}
+    - IMAGE="${HARBOR_HOST}/${HARBOR_PROJECT}/clawbot:${IMAGE_TAG}"
+    - docker build -t ${IMAGE} -f Dockerfile.quickstart .
+    - docker push ${IMAGE}
+    - docker logout ${HARBOR_HOST}
+  when: manual
+  allow_failure: false
+  only:
+    - master
+
