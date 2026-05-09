@@ -76,6 +76,24 @@ RUN printf 'packages:\n  - .\n  - ui\n' > pnpm-workspace.yaml && \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete && \
     node scripts/check-package-dist-imports.mjs /app
 
+# Bundle server.impl chunk into a single file to eliminate 720-file module
+# resolution overhead at startup (~2s in FaaS → ~1s with bundle).
+# The createRequire banner is needed because some deps use dynamic require().
+RUN set -eux; \
+    IMPL_CHUNK=$(find dist -maxdepth 1 -name 'server.impl-*.js' | head -1); \
+    IMPL_LOADER=$(grep -rl "$(basename "$IMPL_CHUNK")" dist/*.js | grep -v "$IMPL_CHUNK" | head -1); \
+    npx esbuild "$IMPL_CHUNK" \
+      --bundle --platform=node --format=esm --minify \
+      --banner:js='import{createRequire as __cr}from"module";const require=__cr(import.meta.url);' \
+      --outfile=dist/server.impl.bundled.js \
+      --external:better-sqlite3 --external:cpu-features \
+      --external:@napi-rs/* --external:sharp --external:canvas \
+      --external:bufferutil --external:utf-8-validate \
+      --external:fsevents; \
+    sed -i "s|$(basename "$IMPL_CHUNK")|server.impl.bundled.js|g" "$IMPL_LOADER"; \
+    rm -f "$IMPL_CHUNK"; \
+    echo "server.impl bundled: $(du -h dist/server.impl.bundled.js | cut -f1)"
+
 # ── Stage 3: Minimal Runtime ──────────────────────────────────
 FROM ${OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE} AS runtime
 
