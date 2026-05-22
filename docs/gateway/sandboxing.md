@@ -50,32 +50,32 @@ The first use after upgrading from an older release creates non-shared runtimes 
 
 **Backend** controls which runtime executes sandboxed tools. Docker and Podman share `agents.defaults.sandbox.docker`; SSH-specific config lives under `agents.defaults.sandbox.ssh`; OpenShell-specific config lives under `plugins.entries.openshell.config`.
 
-|                     | Docker or Podman backend                  | SSH                            | OpenShell                                           |
-| ------------------- | ----------------------------------------- | ------------------------------ | --------------------------------------------------- |
-| **Where it runs**   | Local Docker or Podman container          | Any SSH-accessible host        | OpenShell managed sandbox                           |
-| **Setup**           | Docker and/or Podman                      | SSH key + target host          | OpenShell plugin enabled                            |
-| **Workspace model** | Bind-mount or copy                        | Remote-canonical (seed once)   | `mirror` or `remote`                                |
-| **Network control** | `docker.network` (default: none)          | Depends on remote host         | Depends on OpenShell                                |
-| **Browser sandbox** | Docker engine only                        | Not supported                  | Not supported yet                                   |
-| **Bind mounts**     | `docker.binds`                            | N/A                            | N/A                                                 |
-| **Best for**        | Local development and container isolation | Offloading to a remote machine | Managed remote sandboxes with optional two-way sync |
+|                     | Docker or Podman backend                  | SSH                            | OpenShell                                           | WASM                                   |
+| ------------------- | ----------------------------------------- | ------------------------------ | --------------------------------------------------- | -------------------------------------- |
+| **Where it runs**   | Local Docker or Podman container          | Any SSH-accessible host        | OpenShell managed sandbox                           | In-process (no container/host needed)  |
+| **Setup**           | Docker and/or Podman                      | SSH key + target host          | OpenShell plugin enabled                            | Zero setup (bundled runtime)           |
+| **Workspace model** | Bind-mount or copy                        | Remote-canonical (seed once)   | `mirror` or `remote`                                | In-memory virtual FS                   |
+| **Network control** | `docker.network` (default: none)          | Depends on remote host         | Depends on OpenShell                                | None (no network access)               |
+| **Browser sandbox** | Docker engine only                        | Not supported                  | Not supported yet                                   | Not supported                          |
+| **Bind mounts**     | `docker.binds`                            | N/A                            | N/A                                                 | N/A                                    |
+| **Best for**        | Local development and container isolation | Offloading to a remote machine | Managed remote sandboxes with optional two-way sync | Edge/Serverless, lightweight code eval |
 
 ## Supported capability matrix
 
 Sandbox backends isolate tool execution. They do not move the Gateway, native
 plugins, or control-plane RPC into the sandbox.
 
-| Capability                 | Docker                                                                  | SSH                                                  | OpenShell                                                         |
-| -------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| Shell and child processes  | Supported inside the container                                          | Supported on the remote host                         | Supported inside the managed sandbox                              |
-| File tools                 | Supported through the container filesystem bridge                       | Supported through the SSH filesystem bridge          | Supported through the SSH bridge in `mirror` or `remote` mode     |
-| Workspace access           | `none`, `ro`, and `rw`                                                  | `none`, `ro`, and `rw`                               | `none`, `ro`, and `rw`                                            |
-| Network restriction        | `docker.network`; defaults to `"none"`                                  | Controlled by the remote host                        | Controlled by the selected OpenShell policy                       |
-| Sandboxed browser          | Supported in a separate browser container                               | Not supported                                        | Not supported                                                     |
-| Additional host folders    | `docker.binds` with explicit `:ro` or `:rw`                             | Not supported as mounts; seed or copy files instead  | Not supported as mounts; use workspace sync or remote files       |
-| Packages and runtimes      | Bake a custom image, or use `setupCommand` with the required privileges | Provision them on the remote host                    | Include them in the source image or install when policy permits   |
-| Private certificate roots  | Bake or mount them into the image and configure the consuming runtime   | Configure the remote host trust store                | Include them in the source image or configure them inside sandbox |
-| Plugin and MCP tool access | Gateway-side execution, additionally gated by sandbox tool policy       | Gateway-side execution, additionally gated by policy | Gateway-side execution, additionally gated by sandbox tool policy |
+| Capability                 | Docker                                                                  | SSH                                                  | OpenShell                                                         | WASM                                              |
+| -------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------- |
+| Shell and child processes  | Supported inside the container                                          | Supported on the remote host                         | Supported inside the managed sandbox                              | Limited (QuickJS/Pyodide in-process)              |
+| File tools                 | Supported through the container filesystem bridge                       | Supported through the SSH filesystem bridge          | Supported through the SSH bridge in `mirror` or `remote` mode     | In-memory virtual FS only                         |
+| Workspace access           | `none`, `ro`, and `rw`                                                  | `none`, `ro`, and `rw`                               | `none`, `ro`, and `rw`                                            | `none` or `ro` (virtual FS)                       |
+| Network restriction        | `docker.network`; defaults to `"none"`                                  | Controlled by the remote host                        | Controlled by the selected OpenShell policy                       | No network access                                 |
+| Sandboxed browser          | Supported in a separate browser container                               | Not supported                                        | Not supported                                                     | Not supported                                     |
+| Additional host folders    | `docker.binds` with explicit `:ro` or `:rw`                             | Not supported as mounts; seed or copy files instead  | Not supported as mounts; use workspace sync or remote files       | N/A                                               |
+| Packages and runtimes      | Bake a custom image, or use `setupCommand` with the required privileges | Provision them on the remote host                    | Include them in the source image or install when policy permits   | Bundled QuickJS and Pyodide runtimes              |
+| Private certificate roots  | Bake or mount them into the image and configure the consuming runtime   | Configure the remote host trust store                | Include them in the source image or configure them inside sandbox | N/A                                               |
+| Plugin and MCP tool access | Gateway-side execution, additionally gated by sandbox tool policy       | Gateway-side execution, additionally gated by policy | Gateway-side execution, additionally gated by sandbox tool policy | Gateway-side execution, gated by sandbox policy   |
 
 Native plugins remain in-process with the Gateway and share its trust boundary.
 Sandboxed sessions can use plugin-owned and MCP tools only when normal tool
@@ -268,6 +268,67 @@ Use `backend: "openshell"` to sandbox tools in an OpenShell-managed remote envir
 `openclaw sandbox list`/`recreate`/prune all treat OpenShell runtimes the same as Docker runtimes; prune logic is backend-aware.
 
 For the full prerequisites, configuration reference, workspace-mode comparison, and lifecycle details, see [OpenShell](/gateway/openshell).
+
+### WASM backend
+
+Use `backend: "wasm"` when you need lightweight code execution without Docker or SSH infrastructure. The WASM backend runs JavaScript (via QuickJS) and Python (via Pyodide) directly in the Node.js process using WebAssembly runtimes.
+
+```json5
+{
+  agents: {
+    defaults: {
+      sandbox: {
+        mode: "all",
+        backend: "wasm",
+        scope: "session",
+        workspaceAccess: "rw",
+        wasm: {
+          isolationMode: "per-exec", // "shared" or "per-exec"
+          pythonEnabled: true,
+          jsEnabled: true,
+          memoryLimitMb: 256,
+          execTimeoutMs: 5000,
+        },
+      },
+    },
+  },
+}
+```
+
+<AccordionGroup>
+  <Accordion title="How it works">
+    - JavaScript execution uses QuickJS compiled to WASM (~8ms cold start, sub-millisecond per eval).
+    - Python execution uses Pyodide (~900ms cold start, kept as a shared singleton by default).
+    - TypeScript is transpiled via esbuild before QuickJS execution.
+    - A virtual in-memory filesystem (`Map<string, Buffer>`) provides file I/O.
+    - Native binaries (git, curl, npm, docker, etc.) are explicitly blocked with exit code 127.
+    - Basic shell commands (echo, cat, ls, pwd) are emulated.
+
+  </Accordion>
+  <Accordion title="Supported execution patterns">
+    - `node -e 'console.log(1+1)'` — JavaScript via QuickJS
+    - `python3 -c 'print(42)'` — Python via Pyodide
+    - `echo hello` / `cat file.txt` / `ls` / `pwd` — Shell emulation
+    - Unsupported native commands return code 127 with guidance to use Docker backend.
+
+  </Accordion>
+  <Accordion title="Limitations">
+    - No network access from within WASM sandboxes.
+    - No browser sandbox support (`capabilities.browser = false`).
+    - No native binary execution (git, curl, make, etc.).
+    - Python packages requiring C extensions are limited to what Pyodide bundles.
+    - Virtual FS is in-memory only; no persistence across sandbox recreation.
+    - `isolationMode: "per-exec"` creates fresh QuickJS contexts per command (cheap). Pyodide always uses a shared singleton due to expensive initialization.
+
+  </Accordion>
+  <Accordion title="When to use WASM over Docker">
+    - Edge or Serverless deployments where Docker is unavailable.
+    - Low-resource environments where container overhead is too high.
+    - Simple code execution tasks (data processing, calculations, scripting).
+    - Environments where fast cold-start matters more than full shell access.
+
+  </Accordion>
+</AccordionGroup>
 
 ## Workspace access
 

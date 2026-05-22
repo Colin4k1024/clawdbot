@@ -102,6 +102,19 @@ export type SandboxPruneSettings = {
   maxAgeDays?: number;
 };
 
+export type SandboxWasmSettings = {
+  /** Isolation model: "shared" reuses one WASM instance, "per-exec" creates a new one each call. */
+  isolationMode?: "shared" | "per-exec";
+  /** Enable Python execution via Pyodide (lazy-loaded, ~15MB). Default: true. */
+  pythonEnabled?: boolean;
+  /** Enable JS/TS execution via QuickJS. Default: true. */
+  jsEnabled?: boolean;
+  /** Memory limit per WASM instance in MB. Default: 256. */
+  memoryLimitMb?: number;
+  /** Execution timeout in ms. Default: 30000. */
+  execTimeoutMs?: number;
+};
+
 export type SandboxSshSettings = {
   /** SSH target in user@host[:port] form. */
   target?: string;

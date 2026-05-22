@@ -112,6 +112,7 @@ import {
   resolveSshRuntimePaths,
   sshSandboxBackendManager,
 } from "./ssh-backend.js";
+import { createWasmSandboxBackend } from "./wasm-backend.js";
 
 registerSandboxBackend("docker", {
   factory: createDockerSandboxBackend,
@@ -130,4 +131,8 @@ registerSandboxBackend("ssh", {
   manager: sshSandboxBackendManager,
   resolveWorkdir: ({ cfg, scopeKey }) =>
     resolveSshRuntimePaths(cfg.ssh.workspaceRoot, scopeKey).remoteWorkspaceDir,
+});
+
+registerSandboxBackend("wasm", {
+  factory: createWasmSandboxBackend,
 });
