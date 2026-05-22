@@ -70,20 +70,21 @@ Not sandboxed:
 - `"docker"` (default when sandboxing is enabled): local Docker-backed sandbox runtime.
 - `"ssh"`: generic SSH-backed remote sandbox runtime.
 - `"openshell"`: OpenShell-backed sandbox runtime.
+- `"wasm"`: lightweight in-process WASM sandbox (no Docker/SSH required).
 
 SSH-specific config lives under `agents.defaults.sandbox.ssh`. OpenShell-specific config lives under `plugins.entries.openshell.config`.
 
 ### Choosing a backend
 
-|                     | Docker                           | SSH                            | OpenShell                                           |
-| ------------------- | -------------------------------- | ------------------------------ | --------------------------------------------------- |
-| **Where it runs**   | Local container                  | Any SSH-accessible host        | OpenShell managed sandbox                           |
-| **Setup**           | `scripts/sandbox-setup.sh`       | SSH key + target host          | OpenShell plugin enabled                            |
-| **Workspace model** | Bind-mount or copy               | Remote-canonical (seed once)   | `mirror` or `remote`                                |
-| **Network control** | `docker.network` (default: none) | Depends on remote host         | Depends on OpenShell                                |
-| **Browser sandbox** | Supported                        | Not supported                  | Not supported yet                                   |
-| **Bind mounts**     | `docker.binds`                   | N/A                            | N/A                                                 |
-| **Best for**        | Local dev, full isolation        | Offloading to a remote machine | Managed remote sandboxes with optional two-way sync |
+|                     | Docker                           | SSH                            | OpenShell                                           | WASM                                   |
+| ------------------- | -------------------------------- | ------------------------------ | --------------------------------------------------- | -------------------------------------- |
+| **Where it runs**   | Local container                  | Any SSH-accessible host        | OpenShell managed sandbox                           | In-process (no container/host needed)  |
+| **Setup**           | `scripts/sandbox-setup.sh`       | SSH key + target host          | OpenShell plugin enabled                            | Zero setup (bundled runtime)           |
+| **Workspace model** | Bind-mount or copy               | Remote-canonical (seed once)   | `mirror` or `remote`                                | In-memory virtual FS                   |
+| **Network control** | `docker.network` (default: none) | Depends on remote host         | Depends on OpenShell                                | None (no network access)               |
+| **Browser sandbox** | Supported                        | Not supported                  | Not supported yet                                   | Not supported                          |
+| **Bind mounts**     | `docker.binds`                   | N/A                            | N/A                                                 | N/A                                    |
+| **Best for**        | Local dev, full isolation        | Offloading to a remote machine | Managed remote sandboxes with optional two-way sync | Edge/Serverless, lightweight code eval |
 
 ### Docker backend
 
@@ -278,6 +279,67 @@ For `remote` mode, recreate is especially important:
 - the next use seeds a fresh remote workspace from the local workspace
 
 For `mirror` mode, recreate mainly resets the remote execution environment because the local workspace remains canonical anyway.
+
+### WASM backend
+
+Use `backend: "wasm"` when you need lightweight code execution without Docker or SSH infrastructure. The WASM backend runs JavaScript (via QuickJS) and Python (via Pyodide) directly in the Node.js process using WebAssembly runtimes.
+
+```json5
+{
+  agents: {
+    defaults: {
+      sandbox: {
+        mode: "all",
+        backend: "wasm",
+        scope: "session",
+        workspaceAccess: "rw",
+        wasm: {
+          isolationMode: "per-exec", // "shared" or "per-exec"
+          pythonEnabled: true,
+          jsEnabled: true,
+          memoryLimitMb: 256,
+          execTimeoutMs: 5000,
+        },
+      },
+    },
+  },
+}
+```
+
+<AccordionGroup>
+  <Accordion title="How it works">
+    - JavaScript execution uses QuickJS compiled to WASM (~8ms cold start, sub-millisecond per eval).
+    - Python execution uses Pyodide (~900ms cold start, kept as a shared singleton by default).
+    - TypeScript is transpiled via esbuild before QuickJS execution.
+    - A virtual in-memory filesystem (`Map<string, Buffer>`) provides file I/O.
+    - Native binaries (git, curl, npm, docker, etc.) are explicitly blocked with exit code 127.
+    - Basic shell commands (echo, cat, ls, pwd) are emulated.
+
+  </Accordion>
+  <Accordion title="Supported execution patterns">
+    - `node -e 'console.log(1+1)'` — JavaScript via QuickJS
+    - `python3 -c 'print(42)'` — Python via Pyodide
+    - `echo hello` / `cat file.txt` / `ls` / `pwd` — Shell emulation
+    - Unsupported native commands return code 127 with guidance to use Docker backend.
+
+  </Accordion>
+  <Accordion title="Limitations">
+    - No network access from within WASM sandboxes.
+    - No browser sandbox support (`capabilities.browser = false`).
+    - No native binary execution (git, curl, make, etc.).
+    - Python packages requiring C extensions are limited to what Pyodide bundles.
+    - Virtual FS is in-memory only; no persistence across sandbox recreation.
+    - `isolationMode: "per-exec"` creates fresh QuickJS contexts per command (cheap). Pyodide always uses a shared singleton due to expensive initialization.
+
+  </Accordion>
+  <Accordion title="When to use WASM over Docker">
+    - Edge or Serverless deployments where Docker is unavailable.
+    - Low-resource environments where container overhead is too high.
+    - Simple code execution tasks (data processing, calculations, scripting).
+    - Environments where fast cold-start matters more than full shell access.
+
+  </Accordion>
+</AccordionGroup>
 
 ## Workspace access
 

@@ -1,8 +1,10 @@
+import type { SandboxWasmSettings } from "../../config/types.sandbox.js";
 import type { SandboxBackendHandle, SandboxBackendId } from "./backend-handle.types.js";
 import type { SandboxFsBridge } from "./fs-bridge.types.js";
 import type { SandboxDockerConfig } from "./types.docker.js";
 
 export type { SandboxDockerConfig } from "./types.docker.js";
+export type { SandboxWasmSettings } from "../../config/types.sandbox.js";
 
 export type SandboxToolPolicy = {
   allow?: string[];
@@ -67,6 +69,14 @@ export type SandboxSshConfig = {
 
 export type SandboxScope = "session" | "agent" | "shared";
 
+export type SandboxWasmConfig = {
+  isolationMode: "shared" | "per-exec";
+  pythonEnabled: boolean;
+  jsEnabled: boolean;
+  memoryLimitMb: number;
+  execTimeoutMs: number;
+};
+
 export type SandboxConfig = {
   mode: "off" | "non-main" | "all";
   backend: SandboxBackendId;
@@ -75,6 +85,7 @@ export type SandboxConfig = {
   workspaceRoot: string;
   docker: SandboxDockerConfig;
   ssh: SandboxSshConfig;
+  wasm: SandboxWasmConfig;
   browser: SandboxBrowserConfig;
   tools: SandboxToolPolicy;
   prune: SandboxPruneConfig;
