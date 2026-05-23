@@ -64,7 +64,7 @@ export async function probeGatewayUrl(
   opts: { timeoutMs?: number } = {},
 ): Promise<{ reachable: boolean; url: string; error?: string }> {
   const httpUrl = url.replace(/^ws:/, "http:").replace(/^wss:/, "https:");
-  const healthUrl = new URL("/healthz", httpUrl).toString();
+  const healthUrl = new URL("/ping", httpUrl).toString();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 900);
   try {

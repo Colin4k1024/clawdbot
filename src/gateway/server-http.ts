@@ -150,8 +150,7 @@ function getPluginRouteRuntimeScopesModule() {
 }
 
 const GATEWAY_PROBE_STATUS_BY_PATH = new Map<string, "live" | "ready">([
-  ["/health", "live"],
-  ["/healthz", "live"],
+  ["/ping", "live"],
   ["/ready", "ready"],
   ["/readyz", "ready"],
 ]);

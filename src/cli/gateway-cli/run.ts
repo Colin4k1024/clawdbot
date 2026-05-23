@@ -409,7 +409,7 @@ async function probeGatewayHealthz(params: {
       {
         hostname: normalizeGatewayHealthProbeHost(params.host),
         port: params.port,
-        path: "/healthz",
+        path: "/ping",
         method: "GET",
         timeout: timeoutMs,
       },
