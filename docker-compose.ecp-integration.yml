@@ -1,0 +1,100 @@
+# ECP Integration Test Compose
+#
+# Runs: PostgreSQL + ECP Server (Rust) + OpenClaw Gateway + ECP Test Client
+#
+# Usage:
+#   docker compose -f docker-compose.ecp-integration.yml up --build
+#
+# Architecture:
+#   postgres:5432 ← ecp-server:19000(fleet ws),19001(admin api)
+#   ecp-server:19000 ← openclaw-gateway (future: native ECP client)
+#   ecp-server:19000 ← ecp-test-client (integration test harness)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ecp
+      POSTGRES_PASSWORD: ecp
+      POSTGRES_DB: ecp
+    ports:
+      - "15432:5432"
+    volumes:
+      - ecp-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecp"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  ecp-server:
+    build:
+      context: ../openclaw-ecp
+      dockerfile: Dockerfile
+      args:
+        FEATURES: postgres
+    ports:
+      - "19000:19000"
+      - "19001:19001"
+    environment:
+      ECP__STORE__URL: postgres://ecp:ecp@postgres:5432/ecp
+      ECP__AUTH__JWT_SECRET: integration-test-jwt-secret
+      ECP__AUTH__GATEWAY_SHARED_SECRET: integration-test-gateway-secret
+      ECP__SERVER__FLEET_PORT: "19000"
+      ECP__SERVER__ADMIN_PORT: "19001"
+      ECP__SERVER__ADMIN_BIND: "0.0.0.0"
+      ECP__FLEET__HEARTBEAT_INTERVAL_MS: "10000"
+      ECP__FLEET__STALE_THRESHOLD_MS: "30000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:19001/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  openclaw-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.ecp-gateway
+    environment:
+      HOME: /home/node
+      NODE_ENV: production
+      NODE_COMPILE_CACHE: /app/.compile-cache
+      NODE_OPTIONS: "--max-old-space-size=512"
+      OPENCLAW_GATEWAY_TOKEN: integration-test-token
+      OPENCLAW_EXTENSIONS: ""
+      # ECP client config (for future native integration)
+      OPENCLAW_ECP_URL: ws://ecp-server:19000/ws/fleet
+      OPENCLAW_ECP_GATEWAY_SECRET: integration-test-gateway-secret
+    ports:
+      - "18789:18789"
+    depends_on:
+      ecp-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:18789/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  ecp-test-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.ecp-test
+    environment:
+      ECP_WS_URL: ws://ecp-server:19000/ws/fleet
+      ECP_ADMIN_URL: http://ecp-server:19001
+      ECP_GATEWAY_SECRET: integration-test-gateway-secret
+      ECP_JWT_SECRET: integration-test-jwt-secret
+    depends_on:
+      ecp-server:
+        condition: service_healthy
+      openclaw-gateway:
+        condition: service_healthy
+
+volumes:
+  ecp-pgdata:

@@ -1,0 +1,7 @@
+FROM node:22-bookworm
+
+WORKDIR /test
+
+COPY scripts/ecp-integration-test.mjs .
+
+CMD ["node", "ecp-integration-test.mjs"]

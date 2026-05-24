@@ -527,6 +527,34 @@ export type GatewayToolsConfig = {
   allow?: string[];
 };
 
+export type GatewayWebchatConfig = {
+  /** Max characters per text field in chat.history responses before truncation (default: 12000). */
+  chatHistoryMaxChars?: number;
+};
+
+export type GatewayEcpConfig = {
+  /** Enable ECP (Enterprise Control Plane) integration. */
+  enabled?: boolean;
+  /** WebSocket URL of the ECP server (e.g. ws://ecp:19000/ws/fleet). */
+  url?: string;
+  /** Shared HMAC secret for gateway authentication with ECP. */
+  gatewaySecret?: SecretInput;
+  /** Unique gateway identifier registered with ECP. */
+  gatewayId?: string;
+  /** Heartbeat interval in milliseconds (default: 30000). */
+  heartbeatIntervalMs?: number;
+  /** Reconnect interval in milliseconds (default: 5000). */
+  reconnectIntervalMs?: number;
+  /** Maximum reconnection attempts before giving up (default: 10). */
+  maxReconnectAttempts?: number;
+  /**
+   * Failure mode when ECP is unreachable.
+   * - permissive: allow all tool calls (default)
+   * - restrictive: block all tool calls
+   */
+  disconnectedMode?: "permissive" | "restrictive";
+};
+
 export type GatewayConfig = {
   /** Single multiplexed port for Gateway WS + HTTP (default: 18789). */
   port?: number;
@@ -569,6 +597,8 @@ export type GatewayConfig = {
    * Default: false (safer fail-closed behavior).
    */
   allowRealIpFallback?: boolean;
+  /** Enterprise Control Plane integration. */
+  ecp?: GatewayEcpConfig;
   /** Tool access restrictions for HTTP /tools/invoke endpoint. */
   tools?: GatewayToolsConfig;
 };

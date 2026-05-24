@@ -1,0 +1,41 @@
+# ECP Dev Integration Compose
+#
+# Fast-iteration development compose using locally-available Docker images.
+# Uses postgres:16 container + native ECP binary (started separately).
+#
+# Prerequisites:
+#   cd ../openclaw-ecp && cargo build --release --features postgres
+#
+# Usage:
+#   # 1. Start postgres
+#   docker compose -f docker-compose.ecp-dev.yml up -d
+#
+#   # 2. Start ECP server (native binary, connects to postgres on port 15432)
+#   cd ../openclaw-ecp && ECP__STORE__URL=postgres://ecp:ecp@localhost:15432/ecp \
+#     ./target/release/ecp-server --config config/default.toml
+#
+#   # 3. Run integration test
+#   node scripts/ecp-integration-test.mjs
+#
+#   # 4. Cleanup
+#   docker compose -f docker-compose.ecp-dev.yml down
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ecp
+      POSTGRES_PASSWORD: ecp
+      POSTGRES_DB: ecp
+    ports:
+      - "15432:5432"
+    volumes:
+      - ecp-dev-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecp"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ecp-dev-pgdata:

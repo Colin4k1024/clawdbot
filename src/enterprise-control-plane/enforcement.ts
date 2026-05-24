@@ -1,0 +1,59 @@
+import type { PolicyRule, PolicyEffect } from "./types.js";
+
+export type EvalContext = {
+  toolName?: string;
+  pluginId?: string;
+  promptId?: string;
+  modelId?: string;
+  filePath?: string;
+  userRole?: string;
+  ip?: string;
+};
+
+export type EvalResult = {
+  effect: PolicyEffect;
+  matchedRule?: PolicyRule;
+  reason?: string;
+};
+
+export class PolicyEnforcer {
+  private policies: PolicyRule[] = [];
+
+  updatePolicies(policies: PolicyRule[]): void {
+    this.policies = policies.filter((p) => p.enabled).sort((a, b) => a.priority - b.priority);
+  }
+
+  evaluate(ctx: EvalContext): EvalResult {
+    for (const rule of this.policies) {
+      if (this.matchesScope(rule, ctx)) {
+        return { effect: rule.effect, matchedRule: rule, reason: `matched rule: ${rule.name}` };
+      }
+    }
+    return { effect: "allow", reason: "no matching policy" };
+  }
+
+  private matchesScope(rule: PolicyRule, ctx: EvalContext): boolean {
+    const target = rule.scope_target;
+    switch (rule.scope_type) {
+      case "tool":
+        return ctx.toolName != null && this.globMatch(target, ctx.toolName);
+      case "plugin":
+        return ctx.pluginId != null && this.globMatch(target, ctx.pluginId);
+      case "prompt":
+        return ctx.promptId != null && this.globMatch(target, ctx.promptId);
+      case "model":
+        return ctx.modelId != null && this.globMatch(target, ctx.modelId);
+      case "file_access":
+        return ctx.filePath != null && this.globMatch(target, ctx.filePath);
+      default:
+        return false;
+    }
+  }
+
+  private globMatch(pattern: string, value: string): boolean {
+    if (pattern === "*") return true;
+    if (!pattern.includes("*")) return pattern === value;
+    const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+    return regex.test(value);
+  }
+}
