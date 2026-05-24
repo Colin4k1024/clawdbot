@@ -33,21 +33,28 @@ export class EcpHandler {
     return this.configOverrides;
   }
 
+  private configVersion = 0;
+
   private handleWelcome(frame: EcpWelcome): void {
-    this.enforcer.updatePolicies(frame.policies);
+    this.enforcer.updatePolicies(frame.policies, frame.policy_version);
     this.configOverrides = frame.config_overrides;
     this.callbacks?.onPoliciesUpdated?.(frame.policies);
     this.callbacks?.onConfigOverrides?.(frame.config_overrides);
   }
 
   private handlePolicyPush(frame: EcpPolicyPush): void {
+    if (frame.policy_version <= this.enforcer.currentVersion) {
+      this.client.sendAck(frame.request_id, false, "stale policy version rejected");
+      return;
+    }
     if (frame.mode === "replace") {
-      this.enforcer.updatePolicies(frame.policies);
+      this.enforcer.updatePolicies(frame.policies, frame.policy_version);
     }
     this.callbacks?.onPoliciesUpdated?.(frame.policies);
   }
 
   private handleConfigPush(frame: EcpConfigPush): void {
+    this.configVersion++;
     this.configOverrides = frame.overrides;
     this.callbacks?.onConfigOverrides?.(frame.overrides);
   }

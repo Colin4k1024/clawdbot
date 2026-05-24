@@ -8,9 +8,12 @@ import type { EcpClientConfig, PolicyRule, ConfigOverride } from "./types.js";
 
 type EcpPolicyResult = { blocked: true; reason: string } | { blocked: false };
 
+const DISCONNECTED_GRACE_PERIOD_MS = 300_000; // 5 minutes: use cached policies then go restrictive
+
 let ecpClient: EcpClient | null = null;
 let ecpHandler: EcpHandler | null = null;
-let disconnectedMode: "permissive" | "restrictive" = "permissive";
+let disconnectedMode: "permissive" | "restrictive" = "restrictive";
+let disconnectedAt: number | null = null;
 
 export function isEcpConnected(): boolean {
   return ecpClient?.currentState === "connected";
@@ -21,7 +24,14 @@ export function checkEcpPolicy(ctx: EvalContext): EcpPolicyResult {
 
   if (!isEcpConnected()) {
     if (disconnectedMode === "restrictive") {
-      return { blocked: true, reason: "ECP unreachable (restrictive mode)" };
+      if (disconnectedAt && Date.now() - disconnectedAt < DISCONNECTED_GRACE_PERIOD_MS) {
+        const result = ecpHandler.enforcer.evaluate(ctx);
+        if (result.effect === "deny") {
+          return { blocked: true, reason: result.reason ?? "denied by cached ECP policy" };
+        }
+        return { blocked: false };
+      }
+      return { blocked: true, reason: "ECP unreachable — restrictive mode (grace period expired)" };
     }
     return { blocked: false };
   }
@@ -53,7 +63,7 @@ export function startEcpIntegration(opts: {
     return;
   }
 
-  disconnectedMode = ecpConfig.disconnectedMode ?? "permissive";
+  disconnectedMode = ecpConfig.disconnectedMode ?? "restrictive";
 
   let secret: string;
   if (typeof gatewaySecretRaw === "string") {
@@ -88,9 +98,13 @@ export function startEcpIntegration(opts: {
 
   ecpClient.on("state", (state: string) => {
     if (state === "connected") {
+      disconnectedAt = null;
       log?.info("ECP connected — policies active");
     } else if (state === "disconnected") {
-      log?.warn(`ECP disconnected (mode: ${disconnectedMode})`);
+      if (!disconnectedAt) disconnectedAt = Date.now();
+      log?.warn(
+        `ECP disconnected (mode: ${disconnectedMode}, grace: ${DISCONNECTED_GRACE_PERIOD_MS / 1000}s)`,
+      );
     }
   });
 

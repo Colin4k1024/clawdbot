@@ -123,8 +123,10 @@ export class EcpClient extends EventEmitter {
         this.emit("welcome", frame);
         break;
       case "ecp.policy.push":
-        this.policyVersion = frame.policy_version;
-        this.sendAck(frame.request_id, true);
+        if (frame.policy_version > this.policyVersion) {
+          this.policyVersion = frame.policy_version;
+          this.sendAck(frame.request_id, true);
+        }
         this.emit("policy_push", frame);
         break;
       case "ecp.config.push":
@@ -198,8 +200,10 @@ export class EcpClient extends EventEmitter {
     const maxAttempts = this.config.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT;
     if (this.reconnectAttempts < maxAttempts) {
       this.reconnectAttempts++;
-      const delay = this.config.reconnectIntervalMs ?? DEFAULT_RECONNECT_MS;
-      this.reconnectTimer = setTimeout(() => this.connect(), delay);
+      const baseDelay = this.config.reconnectIntervalMs ?? DEFAULT_RECONNECT_MS;
+      const backoff = Math.min(baseDelay * Math.pow(1.5, this.reconnectAttempts - 1), 60_000);
+      const jitter = Math.random() * backoff * 0.3;
+      this.reconnectTimer = setTimeout(() => this.connect(), backoff + jitter);
     } else {
       this.emit("max_reconnect");
     }
