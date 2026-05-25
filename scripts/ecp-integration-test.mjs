@@ -44,6 +44,7 @@ function generateJwt() {
   const payload = Buffer.from(
     JSON.stringify({
       sub: "admin",
+      role: "admin",
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 3600,
     }),

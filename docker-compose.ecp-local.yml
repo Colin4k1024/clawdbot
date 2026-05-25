@@ -1,0 +1,53 @@
+# ECP Local Dev Compose
+#
+# Runs: PostgreSQL + ECP Server in Docker
+# OpenClaw gateway and test client run natively on host.
+#
+# Usage:
+#   docker compose -f docker-compose.ecp-local.yml up -d
+#   Then run: node scripts/run-ecp-gateway-local.mjs
+#   Then run: node scripts/ecp-integration-test.mjs
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ecp
+      POSTGRES_PASSWORD: ecp
+      POSTGRES_DB: ecp
+    ports:
+      - "15432:5432"
+    volumes:
+      - ecp-local-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecp"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  ecp-server:
+    image: openclaw-ecp-server
+    ports:
+      - "19000:19000"
+      - "19001:19001"
+    environment:
+      ECP__STORE__URL: postgres://ecp:ecp@postgres:5432/ecp
+      ECP__AUTH__JWT_SECRET: integration-test-jwt-secret
+      ECP__AUTH__GATEWAY_SHARED_SECRET: integration-test-gateway-secret
+      ECP__SERVER__FLEET_PORT: "19000"
+      ECP__SERVER__ADMIN_PORT: "19001"
+      ECP__SERVER__ADMIN_BIND: "0.0.0.0"
+      ECP__FLEET__HEARTBEAT_INTERVAL_MS: "10000"
+      ECP__FLEET__STALE_THRESHOLD_MS: "30000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:19001/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  ecp-local-pgdata:
